@@ -1,0 +1,115 @@
+---
+title: "Practical Machine Learning - Class Project"
+output: html_document
+---
+
+## Summary  
+The purpose of this project is to train a machine learning model with an exercise dataset. The dataset is from a <a href="http://groupware.les.inf.puc-rio.br/har">human activity recognition study</a> where subjects are asked do a series of exercises with a dumbbell in 5 different ways (classes A, B, C, D, and E), only one of which (class A) is the correct way of doing the specific exercise. The machine learning model is then used to predict the class of a testing dataset of 20 observations.
+
+## Data Cleaning
+We first import the training and testing datasets.
+```{r, cache=TRUE}
+training <- read.csv('pml-training.csv', stringsAsFactors=FALSE)
+testing <- read.csv('pml-testing.csv', stringsAsFactors=FALSE)
+dim(training)
+```
+
+We remove these variables from the dataset:  
+- X  
+- raw_timestamp_part_1  
+- raw_timestam_part2  
+- cvtd_timestamp  
+Since these are just timestamp data and record numering that will not help in the prediction.
+
+```{r removeTimestamp, cache=TRUE}
+testing[,c(1,3,4,5)] <- list(NULL)
+training[,c(1,3,4,5)] <- list(NULL)
+```
+
+Next we proceed to check for NA or blank values. We find that 100 of the remaining 156 variables have 19216 NA values each.  
+
+```{r removeNAs, cache=TRUE}
+NACount <- data.frame(column=colnames(training))
+naCounter <- data.frame()
+library(stringr)
+for(i in 1:dim(training)[2]){
+      curCount <- sum(is.na(training[,i]) | str_trim(as.character(training[,i])) == "")
+      naCounter <- rbind(naCounter, curCount)
+}
+NACount <- cbind(NACount, naCounter)
+colnames(NACount)[2] <- 'NAcount'
+library(reshape2)
+dcast(NACount, NAcount~'colCount', length, value.var='column')
+```
+
+Notice that the NAs are a 97.9% (19216/19622) of the total observations in the training dataset. We further remove these 100 variables, as they are unlikely to have any predictive power, leaving 55 independent variables plus the dependent variable *classe* in the dataset.  
+
+```{r remove_NA_cols, cache=TRUE}
+training <- subset(training, select=(NACount$NAcount<1000))
+dim(training)
+```
+
+## Classification Modeling with Random Forest  
+
+We build our tree classification model using the Random Forest alogorithm. Since we suspect that the variables *user_name, new_window,* and *num_window* may not have much to do with how the subjects do their exercise, we test different models by excluding these variables as follows:  
+- model1: excluding *user_name, new_window,* and *num_window*    
+- model2: excluding *new_window*, and *num_window*    
+- model3: excluding *user_name*, and *new_window*  
+
+
+```{r randomForest, cache=TRUE, message=FALSE}
+training$classe <- factor(training$classe)
+training$user_name <- factor(training$user_name)
+training$new_window <- factor(training$new_window)
+library(randomForest)
+set.seed(123)
+# no window or user_name
+model1 <- randomForest(classe~.,data=subset(training,select=-c(1:3)))
+# no window but with user_name
+model2 <- randomForest(classe~.,data=subset(training,select=-c(2:3)))
+# with num_window
+model3 <- randomForest(classe~.,data=subset(training,select=-c(1:2)))
+```
+
+Notice that the best performing model is *model3*, the one where we exclude *user_name* and *new_window* from the dataset. Below is the summary output of the three different models.
+```{r modelPerf, eval=FALSE}
+model1;
+model2;
+model3;
+```  
+
+## Expected Out of Sample Error Rate  
+In random forest classification models, the out-of-bag (OOB) estimate of error rate is the expected out of sample error. The following list summarizes the expected out of sample error of each model:  
+- model1: expected OOB error rate = 0.27%  
+- model2: expected OOB error rate = 0.31%  
+- model3: expected OOB error rate = 0.14%  
+
+The error rate of the best model (*model3*) is plotted below as a function of total number of trees. Also, we show the variable importance for *model3*.
+```{r plotModel3}
+plot(model3)
+varImpPlot(model3,cex=0.75)
+```
+
+## Prediction
+
+Next we use the three fitted models to predict the classes of the testing dataset. We also compare the results of these models. Although the three models had slightly different expected OOB error rates, all of them had the same predicted results (see predicted data table below), which increases our confidence in our predictions. 
+
+```{r prediction, cache=TRUE}
+# predict with all 3 models
+testing$user_name <- factor(testing$user_name)
+testing$new_window <- factor(testing$new_window)
+predicted <- data.frame(model1=predict(model1,newdata=testing))
+predicted$model2 <- predict(model2,newdata=testing)
+predicted$model3 <- predict(model3,newdata=testing)
+#predicted data table
+predicted
+```
+
+Finally, we save the results into files for submission.
+```{r saveResult, eval=FALSE}
+# write prediction to files
+for(i in 1:dim(predicted)[1]){
+      filename <- paste0("problem_id_",i,".txt")
+      write.table(predicted[i,1],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+}
+```
